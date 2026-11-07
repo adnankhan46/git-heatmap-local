@@ -1,0 +1,318 @@
+#!/usr/bin/env bash
+# ============================================================
+#  generate-graph.sh
+#  Generates a GitHub-style contribution heatmap from any Git repo
+#  with per-author filtering.
+#
+#  Usage:
+#    1. Copy this file into any Git repository
+#    2. Run:  bash generate-graph.sh
+#    3. Open the generated contribution-graph.html in your browser
+# ============================================================
+set -euo pipefail
+
+if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "X | Not inside a Git repository. cd into a repo first."
+    exit 1
+fi
+
+REPO=$(basename "$(git rev-parse --show-toplevel)")
+CURRENT_USER=$(git config user.name 2>/dev/null || echo "")
+echo ""
+echo "\/\/  Scanning commits in: $REPO"
+echo "\/\/  Current git user: $CURRENT_USER"
+
+# ── Collect date|author pairs ────────────────────────────────
+RAW=$(git log --format="%ad|%an" --date=short --all 2>/dev/null || true)
+
+if [ -z "$RAW" ]; then
+    echo "X |  No commits found in this repository."
+    exit 1
+fi
+
+TOTAL=$(echo "$RAW" | wc -l | tr -d ' ')
+echo "[X]  Found $TOTAL commits across all branches"
+
+# Build JS array: [["2026-01-15","Author Name"],...]
+JS_DATA=""
+while IFS='|' read -r date author; do
+    author_esc=$(echo "$author" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    JS_DATA="${JS_DATA}[\"${date}\",\"${author_esc}\"],"
+done <<< "$RAW"
+JS_DATA="${JS_DATA%,}"
+
+OUTPUT="contribution-graph.html"
+
+# ── Write HTML ───────────────────────────────────────────────
+cat > "$OUTPUT" << 'PART1'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Contribution Graph</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif;background:#0d1117;color:#c9d1d9;padding:40px 20px}
+.container{max-width:1100px;margin:0 auto}
+h1{color:#f0f6fc;font-size:22px;font-weight:600;margin-bottom:4px}
+.subtitle{color:#8b949e;margin-bottom:20px;font-size:14px}
+.filter-bar{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.filter-bar label{color:#8b949e;font-size:13px;display:flex;align-items:center;gap:6px}
+.filter-bar label svg{fill:#8b949e}
+.author-select{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 14px;font-size:13px;font-family:inherit;cursor:pointer;outline:none;min-width:220px;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b949e' viewBox='0 0 16 16'%3E%3Cpath d='M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:30px}
+.author-select:hover,.author-select:focus{border-color:#58a6ff}
+.author-select option{background:#1c2128;color:#c9d1d9}
+.filter-info{color:#8b949e;font-size:12px;margin-left:4px}
+.filter-info span{color:#58a6ff;font-weight:600}
+.stats{display:flex;gap:16px;margin-bottom:24px;flex-wrap:wrap}
+.stat-box{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:14px 20px;min-width:140px}
+.stat-label{color:#8b949e;font-size:12px;margin-bottom:4px}
+.stat-value{color:#58a6ff;font-size:22px;font-weight:600}
+.graph-container{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:20px 24px 16px;overflow-x:auto}
+.graph-wrapper{display:inline-block;min-width:fit-content}
+.months-row{display:flex;gap:3px;margin-left:34px;margin-bottom:6px;height:15px}
+.month-slot{width:11px;flex-shrink:0;font-size:12px;color:#8b949e;overflow:visible;white-space:nowrap;line-height:15px}
+.graph-body{display:flex;align-items:flex-start}
+.day-labels{width:30px;flex-shrink:0;margin-right:4px;display:flex;flex-direction:column;gap:3px}
+.day-label{height:11px;font-size:11px;color:#8b949e;line-height:11px;text-align:right;user-select:none}
+.grid{display:flex;gap:3px}
+.week-col{display:flex;flex-direction:column;gap:3px}
+.day-cell{width:11px;height:11px;border-radius:2px;outline:1px solid rgba(27,31,35,0.06);outline-offset:-1px;cursor:pointer;flex-shrink:0}
+.day-cell:hover{outline:2px solid #58a6ff;outline-offset:-1px}
+.day-cell.future{visibility:hidden;pointer-events:none}
+.lv-0{background:#161b22;outline-color:rgba(255,255,255,0.04)}
+.lv-1{background:#0e4429}.lv-2{background:#006d32}.lv-3{background:#26a641}.lv-4{background:#39d353}
+.legend{display:flex;align-items:center;justify-content:flex-end;margin-top:10px;gap:4px;font-size:11px;color:#8b949e}
+.legend-swatch{width:11px;height:11px;border-radius:2px}
+.tooltip{position:fixed;background:#24292f;border:1px solid #454c54;border-radius:6px;padding:8px 10px;font-size:12px;color:#f0f6fc;pointer-events:none;display:none;z-index:9999;text-align:center;white-space:nowrap;box-shadow:0 2px 12px rgba(0,0,0,.5);line-height:1.5}
+.tooltip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:6px solid transparent;border-top-color:#454c54}
+.tooltip strong{color:#58a6ff}
+.year-info{display:inline-block;background:#0d1117;border:1px solid #30363d;border-radius:20px;padding:4px 14px;font-size:13px;color:#8b949e;margin-bottom:16px}
+.year-info span{color:#39d353;font-weight:600}
+.footer{margin-top:24px;text-align:center;color:#484f58;font-size:12px}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>&#128202; Contribution Graph</h1>
+<div class="subtitle" id="repo-name"></div>
+
+<div class="filter-bar">
+    <label>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M10.561 8.073a6.005 6.005 0 0 1 3.432 5.142.75.75 0 1 1-1.498.07 4.5 4.5 0 0 0-8.99 0 .75.75 0 0 1-1.498-.07 6.004 6.004 0 0 1 3.431-5.142 3.999 3.999 0 1 1 5.123 0zM10.5 5a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0z"/></svg>
+        Contributor
+    </label>
+    <select class="author-select" id="author-filter"></select>
+    <div class="filter-info" id="filter-info"></div>
+</div>
+
+<div class="year-info"><span id="total-display">0</span> contributions in the last year</div>
+
+<div class="stats">
+    <div class="stat-box"><div class="stat-label">Contributions</div><div class="stat-value" id="s-total">0</div></div>
+    <div class="stat-box"><div class="stat-label">Active Days</div><div class="stat-value" id="s-active">0</div></div>
+    <div class="stat-box"><div class="stat-label">Current Streak</div><div class="stat-value" id="s-streak">0 days</div></div>
+    <div class="stat-box"><div class="stat-label">Longest Streak</div><div class="stat-value" id="s-longest">0 days</div></div>
+    <div class="stat-box"><div class="stat-label">Busiest Day</div><div class="stat-value" id="s-busiest">-</div></div>
+</div>
+
+<div class="graph-container">
+    <div class="graph-wrapper">
+        <div class="months-row" id="months-row"></div>
+        <div class="graph-body">
+            <div class="day-labels">
+                <div class="day-label"></div><div class="day-label">Mon</div><div class="day-label"></div>
+                <div class="day-label">Wed</div><div class="day-label"></div><div class="day-label">Fri</div>
+                <div class="day-label"></div>
+            </div>
+            <div class="grid" id="grid"></div>
+        </div>
+        <div class="legend">
+            <span>Less</span>
+            <div class="legend-swatch lv-0"></div><div class="legend-swatch lv-1"></div>
+            <div class="legend-swatch lv-2"></div><div class="legend-swatch lv-3"></div>
+            <div class="legend-swatch lv-4"></div>
+            <span>More</span>
+        </div>
+    </div>
+</div>
+<div class="footer">Generated from local Git history</div>
+</div>
+<div class="tooltip" id="tooltip"></div>
+<script>
+PART1
+
+# ── Inject dynamic data ─────────────────────────────────────
+{
+    echo "var allCommits = [$JS_DATA];"
+    echo "var repoName = \"$REPO\";"
+    echo "var currentUser = \"$(echo "$CURRENT_USER" | sed 's/"/\\"/g')\";"
+} >> "$OUTPUT"
+
+# ── Rest of JS ───────────────────────────────────────────────
+cat >> "$OUTPUT" << 'PART3'
+
+// ─── Helpers ────────────────────────────────────────────────
+function fmtDate(d){var y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0');return y+'-'+m+'-'+dd}
+function addDays(d,n){var r=new Date(d);r.setDate(r.getDate()+n);return r}
+var MO=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+var DN=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+document.getElementById('repo-name').textContent=repoName+' Repository';
+
+var today=new Date();today.setHours(0,0,0,0);
+var gridStart=addDays(today,-(52*7)-today.getDay());
+var gridEl=document.getElementById('grid');
+var monthsRow=document.getElementById('months-row');
+var tooltip=document.getElementById('tooltip');
+var filterSel=document.getElementById('author-filter');
+var filterInfo=document.getElementById('filter-info');
+
+// ─── Build author list & populate dropdown ──────────────────
+var authorCounts={};
+allCommits.forEach(function(c){authorCounts[c[1]]=(authorCounts[c[1]]||0)+1});
+var authors=Object.keys(authorCounts).sort(function(a,b){return authorCounts[b]-authorCounts[a]});
+
+var optAll=document.createElement('option');
+optAll.value='__all__';
+optAll.textContent='All Contributors ('+allCommits.length+' commits)';
+filterSel.appendChild(optAll);
+
+authors.forEach(function(a){
+    var o=document.createElement('option');
+    o.value=a;
+    o.textContent=a+' ('+authorCounts[a]+' commits)';
+    filterSel.appendChild(o);
+});
+
+// Default to current user if found
+var defaultAuthor='__all__';
+if(currentUser){
+    for(var i=0;i<authors.length;i++){
+        if(authors[i]===currentUser){defaultAuthor=currentUser;break}
+    }
+}
+filterSel.value=defaultAuthor;
+
+// ─── Render function ────────────────────────────────────────
+function renderGraph(dates){
+    gridEl.innerHTML='';
+    monthsRow.innerHTML='';
+
+    var counts={};
+    dates.forEach(function(d){counts[d]=(counts[d]||0)+1});
+
+    var prevMonth=-1;
+    var cursor=new Date(gridStart);
+
+    while(cursor<=today){
+        var sm=cursor.getMonth();
+        var ms=document.createElement('div');
+        ms.className='month-slot';
+        if(sm!==prevMonth){ms.textContent=MO[sm];prevMonth=sm}
+        monthsRow.appendChild(ms);
+
+        var col=document.createElement('div');
+        col.className='week-col';
+        for(var d=0;d<7;d++){
+            var cd=addDays(cursor,d);
+            var cell=document.createElement('div');
+            cell.className='day-cell';
+            if(cd>today){cell.classList.add('future')}
+            else{
+                var ds=fmtDate(cd);
+                var n=counts[ds]||0;
+                var lv=0;
+                if(n>=7)lv=4;else if(n>=5)lv=3;else if(n>=3)lv=2;else if(n>=1)lv=1;
+                cell.classList.add('lv-'+lv);
+                cell.dataset.date=ds;cell.dataset.count=n;
+                cell.addEventListener('mouseenter',showTip);
+                cell.addEventListener('mouseleave',hideTip);
+            }
+            col.appendChild(cell);
+        }
+        gridEl.appendChild(col);
+        cursor=addDays(cursor,7);
+    }
+
+    // Stats
+    var total=dates.length;
+    var active=Object.keys(counts).length;
+
+    var curStreak=0;
+    (function(){
+        var d=new Date(today);
+        if(!counts[fmtDate(d)]){d=addDays(d,-1);if(!counts[fmtDate(d)])return}
+        while(counts[fmtDate(d)]){curStreak++;d=addDays(d,-1)}
+    })();
+
+    var longest=0;
+    (function(){
+        var sorted=Object.keys(counts).sort();
+        if(!sorted.length)return;
+        var run=1;longest=1;
+        for(var i=1;i<sorted.length;i++){
+            var p=new Date(sorted[i-1]+'T00:00:00'),c=new Date(sorted[i]+'T00:00:00');
+            if((c-p)/864e5===1){run++;if(run>longest)longest=run}else run=1;
+        }
+    })();
+
+    var busiest='-';
+    (function(){
+        var mx=0,md='';
+        for(var d in counts){if(counts[d]>mx){mx=counts[d];md=d}}
+        if(!md)return;
+        var p=md.split('-');var dt=new Date(+p[0],+p[1]-1,+p[2]);
+        busiest=mx+' on '+dt.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    })();
+
+    document.getElementById('s-total').textContent=total;
+    document.getElementById('total-display').textContent=total;
+    document.getElementById('s-active').textContent=active;
+    document.getElementById('s-streak').textContent=curStreak+' days';
+    document.getElementById('s-longest').textContent=longest+' days';
+    document.getElementById('s-busiest').textContent=busiest;
+
+    var sel=filterSel.value;
+    if(sel==='__all__'){
+        filterInfo.innerHTML='Showing <span>all '+authors.length+' contributors</span>';
+    } else {
+        filterInfo.innerHTML='Showing commits by <span>'+sel+'</span>';
+    }
+}
+
+// ─── Tooltip ────────────────────────────────────────────────
+function showTip(e){
+    var c=e.target,n=+c.dataset.count;
+    var p=c.dataset.date.split('-');
+    var dateObj=new Date(+p[0],+p[1]-1,+p[2]);
+    var nice=dateObj.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+    tooltip.innerHTML=n===0?'No contributions on '+nice:'<strong>'+n+' contribution'+(n>1?'s':'')+'</strong> on '+nice;
+    tooltip.style.display='block';
+    var rect=c.getBoundingClientRect();
+    tooltip.style.left=(rect.left+rect.width/2-tooltip.offsetWidth/2)+'px';
+    tooltip.style.top=(rect.top-tooltip.offsetHeight-10)+'px';
+}
+function hideTip(){tooltip.style.display='none'}
+
+// ─── Filter handler ─────────────────────────────────────────
+function getFilteredDates(){
+    var sel=filterSel.value;
+    if(sel==='__all__')return allCommits.map(function(c){return c[0]});
+    return allCommits.filter(function(c){return c[1]===sel}).map(function(c){return c[0]});
+}
+
+filterSel.addEventListener('change',function(){renderGraph(getFilteredDates())});
+
+// Initial render
+renderGraph(getFilteredDates());
+</script>
+</body>
+</html>
+PART3
+
+echo ""
+echo "[SUCCESS]  Generated: $OUTPUT"
+echo "[OPEN]  Open contribution-graph.html in your browser!"
+echo ""
