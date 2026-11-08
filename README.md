@@ -4,6 +4,8 @@ A script that generates a GitHub-style contribution heatmap for any local Git re
 
 Reads `git log`, builds an HTML page with the green-square graph, and opens it in your browser. No dependencies, no server, just a single HTML file.
 
+![alt text](image-1.png)
+
 ## What it does
 
 - Pulls all commit dates and authors from your local git history

@@ -95,7 +95,7 @@ h1{color:#f0f6fc;font-size:22px;font-weight:600;margin-bottom:4px}
 </head>
 <body>
 <div class="container">
-<h1>&#128202; Contribution Graph</h1>
+<h1> Contribution Graph</h1>
 <div class="subtitle" id="repo-name"></div>
 
 <div class="filter-bar">
@@ -138,6 +138,7 @@ h1{color:#f0f6fc;font-size:22px;font-weight:600;margin-bottom:4px}
     </div>
 </div>
 <div class="footer">Generated from local Git history</div>
+<div class="footer">Give us a star <a href="https://github.com/adnankhan46/git-heatmap-local" target="_blank">adnankhan46/git-heatmap-local</a></div>
 </div>
 <div class="tooltip" id="tooltip"></div>
 <script>
